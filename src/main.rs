@@ -83,6 +83,7 @@ struct HicomApp {
     auto: bool, auto_t: String, auto_acc: f32,
     msg: String, msg_timer: f32,
     was_on: bool,
+    search: String, search_idx: usize, search_show: bool, search_scroll: bool,
 }
 
 impl HicomApp {
@@ -105,7 +106,7 @@ impl HicomApp {
             send: String::new(), hexmd: false, nl: Newline::CrLf,
             auto: true, auto_t: "200".into(), auto_acc: 0.0,
             msg: "就绪".into(), msg_timer: 0.0,
-            was_on: false,
+            was_on: false, search: String::new(), search_idx: 0, search_show: false, search_scroll: false,
         }
     }
 
@@ -444,17 +445,41 @@ impl eframe::App for HicomApp {
                     .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.colored_label(self.tx(), egui::RichText::new("接收数据").size(13.0));
+                        // 🔍 搜索按钮
+                        if ui.small_button(if self.search_show { "X" } else { "🔍" }).clicked() { self.search_show = !self.search_show; if !self.search_show { self.search.clear(); self.search_idx = 0; } }
                         if self.paused { ui.colored_label(color::YELLOW, "[已暂停]"); }
+                        // 搜索框和上下按钮
+                        if self.search_show {
+                            ui.add(egui::TextEdit::singleline(&mut self.search)
+                                .desired_width(130.0)
+                                .hint_text("搜索...")
+                                .font(egui::FontId::monospace(13.0)));
+                            let c = match self.view { View::Ascii => self.txt.as_str(), View::Hex => self.hex.as_str() };
+                            let total = if !self.search.is_empty() { c.matches(&self.search[..]).count() } else { 0 };
+                            if !self.search.is_empty() {
+                                if self.search_idx >= total && total > 0 { self.search_idx = total - 1; }
+                                let info = if total > 0 { format!("{}/{}", self.search_idx + 1, total) } else { "0/0".into() };
+                                ui.colored_label(self.dim(), info);
+                                if ui.small_button("↑").clicked() && total > 0 {
+                                    self.search_idx = if self.search_idx == 0 { total - 1 } else { self.search_idx - 1 };
+                                    self.search_scroll = true;
+                                }
+                                if ui.small_button("↓").clicked() && total > 0 {
+                                    self.search_idx = (self.search_idx + 1) % total;
+                                    self.search_scroll = true;
+                                }
+                            }
+                        }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.selectable_label(self.view == View::Ascii, "ASCII").clicked() { self.view = View::Ascii; }
-                            if ui.selectable_label(self.view == View::Hex, "HEX").clicked() { self.view = View::Hex; }
-                            ui.separator();
+                            ui.checkbox(&mut self.paused, "暂停");
+                            ui.checkbox(&mut self.ts, "时间戳");
+                            if ui.small_button("清空").clicked() { self.clr(); }
                             let btn = ui.small_button("保存日志");
                             if btn.clicked() { self.save_log(); }
                             if btn.secondary_clicked() { self.pick_save_dir(); }
-                            if ui.small_button("清空").clicked() { self.clr(); }
-                            ui.checkbox(&mut self.ts, "时间戳");
-                            ui.checkbox(&mut self.paused, "暂停");
+                            ui.separator();
+                            if ui.selectable_label(self.view == View::Ascii, "ASCII").clicked() { self.view = View::Ascii; }
+                            if ui.selectable_label(self.view == View::Hex, "HEX").clicked() { self.view = View::Hex; }
                         });
                     });
                     ui.separator();
@@ -467,10 +492,11 @@ impl eframe::App for HicomApp {
                     // 提前画接收区的黑色背景（固定在 ScrollArea 后面的层）
                     let rx_bg = if self.dark { color::RX_BG_DARK } else { color::RX_BG_LIGHT };
                     ui.painter().rect_filled(rx_bg_rect, CornerRadius::ZERO, rx_bg);
+                    let stick_to_bottom = !self.search_show || self.search.is_empty();
                     egui::ScrollArea::vertical()
                         .id_salt(rx_id)
                         .auto_shrink([false; 2])
-                        .stick_to_bottom(true)
+                        .stick_to_bottom(stick_to_bottom)
                         .max_height(rx_avail_h)
                         .show(ui, |ui| {
                             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
@@ -478,8 +504,19 @@ impl eframe::App for HicomApp {
                             Frame { fill: rx_bg, inner_margin: Margin::symmetric(4, 4), ..Default::default() }
                                 .show(ui, |ui| {
                                     ui.set_min_size(egui::vec2(ui.available_width().max(0.0), rx_avail_h.max(0.0)));
-                                    // 逐行显示，奇偶行交替文字颜色
+                                    // 逐行显示，支持搜索高亮
                                     let full_w = ui.available_width().max(1.0);
+                                    let font = egui::FontId::monospace(14.0);
+                                    let hl_bg = Color32::from_rgb(255, 200, 0);
+                                    let hl_fg = Color32::BLACK;
+                                    let search = if self.search_show && !self.search.is_empty() { self.search.to_lowercase() } else { String::new() };
+                                    let search_active = !search.is_empty();
+                                    let mut cur_match = 0usize;
+                                    // 找到当前高亮的匹配位置
+                                    let target_match = self.search_idx;
+
+                                    let mut scroll_rect: Option<egui::Rect> = None;
+
                                     for (i, line) in c.split('\n').enumerate() {
                                         let fg = match i % 3 {
                                             0 => Color32::from_rgb(220, 220, 230),
@@ -487,7 +524,49 @@ impl eframe::App for HicomApp {
                                             _ => Color32::from_rgb(100, 180, 220),
                                         };
                                         let (id, painter) = ui.allocate_painter(egui::vec2(full_w, 18.0), egui::Sense::hover());
-                                        painter.text(id.rect.min + egui::vec2(2.0, 1.0), egui::Align2::LEFT_TOP, line, egui::FontId::monospace(14.0), fg);
+                                        let start = id.rect.min + egui::vec2(2.0, 1.0);
+                                        if search_active {
+                                            let lower = line.to_lowercase();
+                                            let mut p = 0;
+                                            let mut x_off = 2.0f32;
+                                            while p < line.len() {
+                                                match lower[p..].find(&search) {
+                                                    None => { break; }
+                                                    Some(rel) => {
+                                                        let idx = p + rel;
+                                                        // 画匹配前文本片段
+                                                        if idx > p {
+                                                            let seg = &line[p..idx];
+                                                            let w = ctx.fonts(|f| f.glyph_width(&font, ' ') as f32) * seg.len() as f32 * 0.6;
+                                                            painter.text(start + egui::vec2(x_off, 0.0), egui::Align2::LEFT_TOP, seg, font.clone(), fg);
+                                                            x_off += w;
+                                                        }
+                                                        // 画高亮匹配
+                                                        let mseg = &line[idx..(idx + search.len()).min(line.len())];
+                                                        let w = ctx.fonts(|f| f.glyph_width(&font, ' ') as f32) * search.len() as f32 * 0.6;
+                                                        let is_curr = cur_match == target_match;
+                                                        let rect = egui::Rect::from_min_size(start + egui::vec2(x_off, 0.0), egui::vec2(w, 16.0));
+                                                        painter.rect_filled(rect, CornerRadius::ZERO, if is_curr { Color32::YELLOW } else { hl_bg });
+                                                        painter.text(rect.min, egui::Align2::LEFT_TOP, mseg, font.clone(), if is_curr { Color32::BLACK } else { hl_fg });
+                                                        if is_curr { scroll_rect = Some(id.rect); }
+                                                        x_off += w;
+                                                        p = idx + search.len();
+                                                        cur_match += 1;
+                                                    }
+                                                }
+                                            }
+                                            // 画剩余文本
+                                            if p < line.len() {
+                                                painter.text(start + egui::vec2(x_off, 0.0), egui::Align2::LEFT_TOP, &line[p..], font.clone(), fg);
+                                            }
+                                        } else {
+                                            painter.text(start, egui::Align2::LEFT_TOP, line, font.clone(), fg);
+                                        }
+                                    }
+                                    // 滚动到当前匹配行
+                                    if let Some(r) = scroll_rect {
+                                        ui.scroll_to_rect(r, Some(egui::Align::Center));
+                                        ctx.request_repaint(); // 确保持续定位
                                     }
                                 });
                         });
