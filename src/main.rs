@@ -6,7 +6,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use egui::{Color32, CornerRadius, FontData, FontFamily, Frame, Margin, TextEdit, Vec2};
+use egui::{Color32, CornerRadius, CursorIcon, FontData, FontFamily, Frame, Margin, TextEdit, Vec2};
 
 mod color {
     use egui::Color32;
@@ -209,10 +209,31 @@ impl HicomApp {
     fn dtr_set(&mut self, v: bool) { self.dtr = v; if let Some(tx) = &self.port_tx { let _ = tx.send(PortCmd::SetDtr(v)); } }
     fn rts_set(&mut self, v: bool) { self.rts = v; if let Some(tx) = &self.port_tx { let _ = tx.send(PortCmd::SetRts(v)); } }
 
-    fn save_log(&mut self) {
+    fn save_log_to(&mut self, dir: Option<String>) {
         let content = if self.view == View::Ascii { self.txt.clone() } else { self.hex.clone() };
-        let path = format!("HiCOM_log_{}.txt", chrono_now());
-        match std::fs::write(&path, content) { Ok(_) => { self.msg = format!("已保存: {}", path); self.msg_timer = 2.0; } Err(e) => { self.msg = format!("保存失败: {}", e); self.msg_timer = 2.0; } }
+        let fname = format!("HiCOM_log_{}.txt", chrono_now());
+        let path = match &dir { Some(d) => format!("{}/{}", d, fname), None => fname.clone() };
+        let display = if dir.is_some() { &fname } else { &path };
+        match std::fs::write(&path, content) { Ok(_) => { self.msg = format!("已保存: {}", display); self.msg_timer = 2.0; } Err(e) => { self.msg = format!("保存失败: {}", e); self.msg_timer = 2.0; } }
+    }
+
+    fn save_log(&mut self) {
+        self.save_log_to(None);
+    }
+
+    fn pick_save_dir(&mut self) {
+        let content = if self.view == View::Ascii { self.txt.clone() } else { self.hex.clone() };
+        let fname = format!("HiCOM_log_{}.txt", chrono_now());
+        // 在新线程弹出目录选择对话框，不影响 UI
+        std::thread::spawn(move || {
+            if let Some(dir) = rfd::FileDialog::new().set_title("选择保存目录").pick_folder() {
+                let full = dir.join(&fname);
+                match std::fs::write(&full, &content) {
+                    Ok(_) => eprintln!("SAVED:{}", full.display()),
+                    Err(e) => eprintln!("SAVE_ERR:{}", e),
+                }
+            }
+        });
     }
 }
 
@@ -401,7 +422,9 @@ impl eframe::App for HicomApp {
                             if ui.selectable_label(self.view == View::Ascii, "ASCII").clicked() { self.view = View::Ascii; }
                             if ui.selectable_label(self.view == View::Hex, "HEX").clicked() { self.view = View::Hex; }
                             ui.separator();
-                            if ui.small_button("保存日志").clicked() { self.save_log(); }
+                            let btn = ui.small_button("保存日志");
+                            if btn.clicked() { self.save_log(); }
+                            if btn.secondary_clicked() { self.pick_save_dir(); }
                             if ui.small_button("清空").clicked() { self.clr(); }
                             ui.checkbox(&mut self.ts, "时间戳");
                             ui.checkbox(&mut self.paused, "暂停");

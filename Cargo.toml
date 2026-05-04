@@ -7,3 +7,4 @@ edition = "2021"
 eframe = { version = "0.31", default-features = false, features = ["glow"] }
 egui = "0.31"
 serialport = "4.9"
+rfd = "0.15"
