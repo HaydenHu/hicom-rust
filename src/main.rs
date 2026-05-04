@@ -75,7 +75,7 @@ struct HicomApp {
 impl HicomApp {
     fn new() -> Self {
         let names = available_ports();
-        let sel = names.first().cloned().unwrap_or_default();
+        let sel = names.iter().find(|n| n.contains('[')).cloned().or_else(|| names.first().cloned()).unwrap_or_default();
         Self {
             font_ok: false, port_open: Arc::new(Mutex::new(false)), port_tx: None,
             rx: Arc::new(Mutex::new(RxBuf { raw: Vec::with_capacity(65536), bytes: 0 })),
@@ -215,19 +215,43 @@ impl HicomApp {
 fn port_name_only(display: &str) -> String { display.split_whitespace().next().unwrap_or(display).to_string() }
 
 fn available_ports() -> Vec<String> {
-    serialport::available_ports().map(|p| p.into_iter().map(|x| {
-        let name = &x.port_name;
-        match &x.port_type {
-            serialport::SerialPortType::UsbPort(info) => {
-                let mfr = info.manufacturer.as_deref().unwrap_or("");
-                let prod = info.product.as_deref().unwrap_or("");
-                if !mfr.is_empty() || !prod.is_empty() { format!("{}  [{}{}{}]", name, mfr, if !mfr.is_empty() && !prod.is_empty() { " " } else { "" }, prod) } else { name.clone() }
-            }
-            serialport::SerialPortType::BluetoothPort => format!("{}  [蓝牙]", name),
-            serialport::SerialPortType::PciPort => format!("{}  [PCI]", name),
-            _ => name.clone(),
-        }
-    }).collect()).unwrap_or_default()
+    serialport::available_ports().map(|p| {
+        let mut seen = std::collections::HashSet::new();
+        p.into_iter().filter_map(|x| {
+            let name = &x.port_name;
+            // 相同端口名只保留第一个（优先带详细信息）
+            if !seen.insert(name.clone()) { return None; }
+            let display = match &x.port_type {
+                serialport::SerialPortType::UsbPort(info) => {
+                    let mfr = info.manufacturer.as_deref().unwrap_or("").trim();
+                    let prod = info.product.as_deref().unwrap_or("").trim();
+                    // 去掉制造商/产品末尾的端口名及括号包裹，避免重复显示（如 "WCH-Link SERIAL (COM23)" 中的 (COM23)）
+                    let strip_port = |s: &str| -> String {
+                        let s = s.trim_end();
+                        let pn = name.trim();
+                        // 去掉 " (COM23)" 或 "(COM23)" 或 " COM23" 结尾
+                        let patterns = [
+                            format!(" ({})", pn),
+                            format!("({})", pn),
+                            format!(" {}", pn),
+                        ];
+                        let mut r = s.to_string();
+                        for pat in &patterns {
+                            if r.ends_with(pat) { r = r[..r.len() - pat.len()].trim_end().to_string(); break; }
+                        }
+                        r
+                    };
+                    let mfr = strip_port(mfr);
+                    let prod = strip_port(prod);
+                    if !mfr.is_empty() || !prod.is_empty() { format!("{}  [{}{}{}]", name, mfr, if !mfr.is_empty() && !prod.is_empty() { " " } else { "" }, prod) } else { name.clone() }
+                }
+                serialport::SerialPortType::BluetoothPort => format!("{}  [蓝牙]", name),
+                serialport::SerialPortType::PciPort => format!("{}  [PCI]", name),
+                _ => name.clone(),
+            };
+            Some(display)
+        }).collect()
+    }).unwrap_or_default()
 }
 
 fn ts() -> String {
@@ -289,7 +313,7 @@ impl eframe::App for HicomApp {
                     ui.horizontal(|ui| {
                         let (lbl, clr) = if on { ("关闭", color::RED) } else { ("打开", color::GREEN) };
                         if ui.add_sized([60.0, 24.0], egui::Button::new(egui::RichText::new(lbl).color(Color32::WHITE)).fill(clr).corner_radius(6)).clicked() { self.toggle(); }
-                        if on { ui.colored_label(color::GREEN, "● 已连接"); ui.colored_label(color::TEXT, format!("{} @ {} {} {} {}", self.sel_port, self.baud, self.db, self.sb, self.par)); }
+                        if on { let pn = port_name_only(&self.sel_port); ui.colored_label(color::GREEN, "● 已连接"); ui.colored_label(color::TEXT, format!("{} @ {} {} {} {}", pn, self.baud, self.db, self.sb, self.par)); }
                         else { ui.colored_label(color::DIM, "○ 未连接"); }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| { if ui.small_button("刷新").clicked() { self.refresh(); } });
                     });
@@ -374,7 +398,7 @@ impl eframe::App for HicomApp {
                             ui.add_space(8.0);
                             ui.colored_label(color::ACCENT, format!("TX: {}", fmtsz(self.tx_n)));
                             ui.add_space(12.0);
-                            if on { ui.colored_label(color::DIM, format!("{} @ {} {} {} {}", self.sel_port, self.baud, self.db, self.sb, self.par)); ui.add_space(4.0); ui.colored_label(color::GREEN, "●"); }
+                            if on { let pn = port_name_only(&self.sel_port); ui.colored_label(color::DIM, format!("{} @ {} {} {} {}", pn, self.baud, self.db, self.sb, self.par)); ui.add_space(4.0); ui.colored_label(color::GREEN, "●"); }
                             else { ui.colored_label(color::DIM, "○ 未连接"); }
                         });
                     });
