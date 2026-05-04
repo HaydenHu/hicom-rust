@@ -118,7 +118,7 @@ impl HicomApp {
             dtr: true, rts: true, page: Page::Terminal, view: View::Ascii, txt: String::new(), hex: String::new(), rx_n: 0, tx_n: 0,
             ts: true, paused: false,
             send: String::new(), hexmd: false, nl: Newline::CrLf,
-            auto: true, auto_t: "200".into(), auto_acc: 0.0,
+            auto: false, auto_t: "200".into(), auto_acc: 0.0,
             msg: "就绪".into(), msg_timer: 0.0,
             was_on: false, search: String::new(), search_idx: 0, search_show: false, search_scroll: false,
             wave_buf: VecDeque::with_capacity(2000),
