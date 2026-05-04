@@ -1,0 +1,9 @@
+[package]
+name = "hicom"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eframe = { version = "0.31", default-features = false, features = ["glow"] }
+egui = "0.31"
+serialport = "4.9"
