@@ -268,6 +268,44 @@ fn chrono_now() -> String {
 
 fn fmtsz(n: u64) -> String { if n < 1024 { format!("{} B", n) } else if n < 1048576 { format!("{:.1} KB", n as f64 / 1024.0) } else { format!("{:.2} MB", n as f64 / 1048576.0) } }
 
+fn make_icon_rgba() -> Vec<u8> {
+    let w = 32;
+    let h = 32;
+    let mut rgba = vec![0u8; w * h * 4];
+    for y in 0..h {
+        for x in 0..w {
+            let i = (y * w + x) * 4;
+            let cx = x as i32 - 16;
+            let cy = y as i32 - 16;
+            let d = ((cx * cx + cy * cy) as f64).sqrt();
+            // 蓝色圆形背景
+            if d < 14.0 {
+                rgba[i + 0] = 0;   // R
+                rgba[i + 1] = 100; // G
+                rgba[i + 2] = 200; // B
+                rgba[i + 3] = 255; // A
+                // 白色 "C" 字母
+                // 外弧: 半径 8-12, 左半圆 + 中间缺口
+                let rd = ((cx * cx + cy * cy) as f64).sqrt();
+                if rd > 6.0 && rd < 11.0 && (cx < 2 || cy.abs() > 4) {
+                    rgba[i + 0] = 255;
+                    rgba[i + 1] = 255;
+                    rgba[i + 2] = 255;
+                    rgba[i + 3] = 255;
+                }
+                // 中心挖空
+                if cx.abs() < 3 && cy.abs() < 5 {
+                    rgba[i + 0] = 0;
+                    rgba[i + 1] = 100;
+                    rgba[i + 2] = 200;
+                    rgba[i + 3] = 255;
+                }
+            }
+        }
+    }
+    rgba
+}
+
 fn combo<T: Clone + PartialEq + std::fmt::Display>(ui: &mut egui::Ui, id: &str, v: &mut T, opts: &[T], w: f32) {
     egui::ComboBox::from_id_salt(id).width(w).selected_text(v.to_string()).show_ui(ui, |ui| { for o in opts { ui.selectable_value(v, o.clone(), o.to_string()); } });
 }
@@ -428,5 +466,10 @@ impl eframe::App for HicomApp {
 }
 
 fn main() -> eframe::Result {
-    eframe::run_native("hicom - 串口助手", eframe::NativeOptions { viewport: egui::ViewportBuilder::default().with_inner_size([960.0, 700.0]), ..Default::default() }, Box::new(|_cc| Ok(Box::new(HicomApp::new()))))
+    let icon = egui::IconData {
+        rgba: make_icon_rgba(),
+        width: 32,
+        height: 32,
+    };
+    eframe::run_native("hicom - 串口助手", eframe::NativeOptions { viewport: egui::ViewportBuilder::default().with_inner_size([960.0, 700.0]).with_icon(icon), ..Default::default() }, Box::new(|_cc| Ok(Box::new(HicomApp::new()))))
 }

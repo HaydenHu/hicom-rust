@@ -3,6 +3,12 @@ name = "hicom"
 version = "0.1.0"
 edition = "2021"
 
+[package.metadata.winres]
+icon = "icon.ico"
+
+# [build-dependencies]
+# 直接调用系统 rc.exe，无需额外依赖
+
 [dependencies]
 eframe = { version = "0.31", default-features = false, features = ["glow"] }
 egui = "0.31"
