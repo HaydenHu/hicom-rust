@@ -566,7 +566,16 @@ impl eframe::App for HicomApp {
                         ui.horizontal(|ui| {
                             ui.add_enabled_ui(!on, |ui| { ui.label("端口"); combo(ui, "p", &mut self.sel_port, &self.names.clone(), 160.0); });
                             ui.separator();
-                            ui.add_enabled_ui(!on, |ui| { ui.label("波特率"); combo(ui, "b", &mut self.baud, &["300","1200","2400","4800","9600","19200","38400","57600","115200","230400","460800","921600"].map(|s| s.to_string()), 90.0); });
+                            ui.add_enabled_ui(!on, |ui| {
+                                ui.label("波特率");
+                                ui.add(egui::TextEdit::singleline(&mut self.baud).desired_width(80.0).font(egui::FontId::monospace(13.0)).hint_text("115200"));
+                                // 常用值快速选择
+                                egui::ComboBox::from_id_salt("baud_preset").selected_text("").width(10.0).show_ui(ui, |ui| {
+                                    for s in &["300","1200","2400","4800","9600","19200","38400","57600","115200","230400","460800","921600"] {
+                                        if ui.selectable_label(false, *s).clicked() { self.baud = s.to_string(); }
+                                    }
+                                });
+                            });
                             ui.separator();
                             ui.add_enabled_ui(!on, |ui| { ui.label("数据"); combo(ui, "D", &mut self.db, &[DataBits::Eight, DataBits::Seven, DataBits::Six, DataBits::Five], 40.0); ui.label("停止"); combo(ui, "S", &mut self.sb, &[StopBits::One, StopBits::Two], 35.0); ui.label("校验"); combo(ui, "P", &mut self.par, &[Parity::None, Parity::Odd, Parity::Even], 60.0); ui.label("流控"); combo(ui, "F", &mut self.fc, &[FlowCtrl::None, FlowCtrl::Hardware, FlowCtrl::Software], 70.0); });
                             ui.separator();
