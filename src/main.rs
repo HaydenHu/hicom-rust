@@ -70,6 +70,7 @@ struct HicomApp {
     send: String, hexmd: bool, nl: Newline,
     auto: bool, auto_t: String, auto_acc: f32,
     msg: String, msg_timer: f32,
+    was_on: bool,
 }
 
 impl HicomApp {
@@ -85,6 +86,7 @@ impl HicomApp {
             send: String::new(), hexmd: false, nl: Newline::CrLf,
             auto: true, auto_t: "200".into(), auto_acc: 0.0,
             msg: "就绪".into(), msg_timer: 0.0,
+            was_on: false,
         }
     }
 
@@ -317,7 +319,8 @@ impl eframe::App for HicomApp {
                         else { ui.colored_label(color::DIM, "○ 未连接"); }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| { if ui.small_button("刷新").clicked() { self.refresh(); } });
                     });
-                    egui::CollapsingHeader::new("串口设置").default_open(!on).show(ui, |ui| {
+                    let force_open = if self.was_on != on { Some(!on) } else { None };
+                    egui::CollapsingHeader::new("串口设置").id_salt("cfg").default_open(!on).open(force_open).show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.add_enabled_ui(!on, |ui| { ui.label("端口"); combo(ui, "p", &mut self.sel_port, &self.names.clone(), 160.0); });
                             ui.separator();
@@ -329,6 +332,8 @@ impl eframe::App for HicomApp {
                         });
                     });
                 });
+                // 跟踪连接状态变化
+                self.was_on = on;
 
                 ui.add_space(4.0);
 
