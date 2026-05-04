@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::fmt::Write;
 use std::io::Read;
 use std::sync::mpsc;
@@ -209,7 +211,7 @@ impl HicomApp {
 
     fn save_log(&mut self) {
         let content = if self.view == View::Ascii { self.txt.clone() } else { self.hex.clone() };
-        let path = format!("hicom_log_{}.txt", chrono_now());
+        let path = format!("HiCOM_log_{}.txt", chrono_now());
         match std::fs::write(&path, content) { Ok(_) => { self.msg = format!("已保存: {}", path); self.msg_timer = 2.0; } Err(e) => { self.msg = format!("保存失败: {}", e); self.msg_timer = 2.0; } }
     }
 }
@@ -484,5 +486,5 @@ fn main() -> eframe::Result {
         width: 32,
         height: 32,
     };
-    eframe::run_native("hicom - 串口助手", eframe::NativeOptions { viewport: egui::ViewportBuilder::default().with_inner_size([960.0, 700.0]).with_icon(icon), ..Default::default() }, Box::new(|_cc| Ok(Box::new(HicomApp::new()))))
+    eframe::run_native("HiCOM - 串口助手", eframe::NativeOptions { viewport: egui::ViewportBuilder::default().with_inner_size([960.0, 700.0]).with_icon(icon), ..Default::default() }, Box::new(|_cc| Ok(Box::new(HicomApp::new()))))
 }
