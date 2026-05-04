@@ -781,10 +781,14 @@ impl eframe::App for HicomApp {
                         if ui.checkbox(&mut self.auto, "定时").changed() && !self.auto { self.auto_acc = 0.0; }
                         if self.auto { ui.add(egui::TextEdit::singleline(&mut self.auto_t).desired_width(50.0)); ui.label("ms"); }
                     });
-                    ui.horizontal(|ui| {
+                    let send_h = 80.0;
+                    ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), send_h), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         let h = if self.hexmd { "HEX (如 A0 1B 2C)" } else { "输入内容... (Ctrl+Enter 发送)" };
-                        ui.add_sized([ui.available_width() - 90.0, 72.0], TextEdit::multiline(&mut self.send).font(egui::FontId::monospace(14.0)).hint_text(h));
-                        ui.add_sized([80.0, 72.0], egui::Button::new(egui::RichText::new("发送").size(15.0).color(Color32::WHITE)).fill(color::ACCENT).corner_radius(6)).clicked().then(|| self.do_send());
+                        let text_w = ui.available_width() - 88.0;
+                        egui::ScrollArea::vertical().id_salt("send").max_height(send_h).show(ui, |ui| {
+                            ui.add_sized([text_w, send_h], TextEdit::multiline(&mut self.send).font(egui::FontId::monospace(14.0)).hint_text(h));
+                        });
+                        ui.add_sized([80.0, send_h], egui::Button::new(egui::RichText::new("发送").size(15.0).color(Color32::WHITE)).fill(color::ACCENT).corner_radius(6)).clicked().then(|| self.do_send());
                     });
                     ui.separator();
                     ui.horizontal(|ui| {
