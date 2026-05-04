@@ -6,18 +6,27 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use egui::{Color32, CornerRadius, CursorIcon, FontData, FontFamily, Frame, Margin, TextEdit, Vec2};
+use egui::{Color32, CornerRadius, FontData, FontFamily, Frame, Margin, TextEdit, Vec2};
 
 mod color {
     use egui::Color32;
-    pub const BG: Color32 = Color32::from_rgb(30, 30, 34);
-    pub const PANEL: Color32 = Color32::from_rgb(38, 38, 44);
+    // 黑暗
+    pub const BG_DARK: Color32 = Color32::from_rgb(30, 30, 34);
+    pub const PANEL_DARK: Color32 = Color32::from_rgb(38, 38, 44);
+    pub const TEXT_DARK: Color32 = Color32::from_rgb(220, 220, 230);
+    pub const DIM_DARK: Color32 = Color32::from_rgb(100, 100, 110);
+    // 明亮
+    pub const BG_LIGHT: Color32 = Color32::from_rgb(240, 240, 240);
+    pub const PANEL_LIGHT: Color32 = Color32::from_rgb(255, 255, 255);
+    pub const TEXT_LIGHT: Color32 = Color32::from_rgb(30, 30, 34);
+    pub const DIM_LIGHT: Color32 = Color32::from_rgb(140, 140, 150);
+    // 通用
     pub const ACCENT: Color32 = Color32::from_rgb(70, 130, 220);
     pub const GREEN: Color32 = Color32::from_rgb(80, 200, 80);
     pub const RED: Color32 = Color32::from_rgb(220, 70, 70);
     pub const YELLOW: Color32 = Color32::from_rgb(220, 170, 40);
-    pub const TEXT: Color32 = Color32::from_rgb(220, 220, 230);
-    pub const DIM: Color32 = Color32::from_rgb(100, 100, 110);
+    pub const RX_BG_DARK: Color32 = Color32::BLACK;
+    pub const RX_BG_LIGHT: Color32 = Color32::from_rgb(245, 245, 245);
 }
 
 enum PortCmd {
@@ -58,6 +67,7 @@ struct RxBuf {
 
 struct HicomApp {
     font_ok: bool,
+    dark: bool,
     port_open: Arc<Mutex<bool>>,
     port_tx: Option<mpsc::Sender<PortCmd>>,
     rx: Arc<Mutex<RxBuf>>,
@@ -76,11 +86,18 @@ struct HicomApp {
 }
 
 impl HicomApp {
+    fn bg(&self) -> Color32 { if self.dark { color::BG_DARK } else { color::BG_LIGHT } }
+    fn panel(&self) -> Color32 { if self.dark { color::PANEL_DARK } else { color::PANEL_LIGHT } }
+    fn tx(&self) -> Color32 { if self.dark { color::TEXT_DARK } else { color::TEXT_LIGHT } }
+    fn dim(&self) -> Color32 { if self.dark { color::DIM_DARK } else { color::DIM_LIGHT } }
+}
+
+impl HicomApp {
     fn new() -> Self {
         let names = available_ports();
         let sel = names.iter().find(|n| n.contains('[')).cloned().or_else(|| names.first().cloned()).unwrap_or_default();
         Self {
-            font_ok: false, port_open: Arc::new(Mutex::new(false)), port_tx: None,
+            font_ok: false, dark: true, port_open: Arc::new(Mutex::new(false)), port_tx: None,
             rx: Arc::new(Mutex::new(RxBuf { raw: Vec::with_capacity(65536), bytes: 0 })),
             names, sel_port: sel, baud: "115200".into(), db: DataBits::Eight, sb: StopBits::One, par: Parity::None, fc: FlowCtrl::None,
             dtr: true, rts: true, view: View::Ascii, txt: String::new(), hex: String::new(), rx_n: 0, tx_n: 0,
@@ -333,12 +350,8 @@ fn combo<T: Clone + PartialEq + std::fmt::Display>(ui: &mut egui::Ui, id: &str, 
     egui::ComboBox::from_id_salt(id).width(w).selected_text(v.to_string()).show_ui(ui, |ui| { for o in opts { ui.selectable_value(v, o.clone(), o.to_string()); } });
 }
 
-fn panel_frame() -> Frame { Frame { inner_margin: Margin::symmetric(8, 6), fill: color::PANEL, corner_radius: CornerRadius::same(6), ..Default::default() } }
-
 impl eframe::App for HicomApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        ctx.set_visuals(egui::Visuals { dark_mode: true, panel_fill: color::PANEL, window_fill: color::PANEL, ..Default::default() });
-
         if !self.font_ok {
             let mut fs = egui::FontDefinitions::default();
             // 跨平台字体回退：检查多个可能的字体路径
@@ -359,6 +372,16 @@ impl eframe::App for HicomApp {
                 }
             }
             ctx.set_fonts(fs); self.font_ok = true;
+        }
+
+        // 根据 dark 模式设置主题
+        if self.dark {
+            ctx.set_visuals(egui::Visuals { dark_mode: true, panel_fill: self.panel(), window_fill: self.bg(), ..Default::default() });
+        } else {
+            let mut v = egui::Visuals::light();
+            v.panel_fill = self.panel();
+            v.window_fill = self.bg();
+            ctx.set_visuals(v);
         }
 
         self.drain_rx();
@@ -384,14 +407,18 @@ impl eframe::App for HicomApp {
             .show(ctx, |ui| {
             ui.vertical(|ui| {
                 // ── 第一块：串口配置 ──
-                Frame { fill: color::PANEL, corner_radius: CornerRadius::same(6), inner_margin: Margin::symmetric(8, 6), ..Default::default() }
+                Frame { fill: self.panel(), corner_radius: CornerRadius::same(6), inner_margin: Margin::symmetric(8, 6), ..Default::default() }
                     .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         let (lbl, clr) = if on { ("关闭", color::RED) } else { ("打开", color::GREEN) };
                         if ui.add_sized([60.0, 24.0], egui::Button::new(egui::RichText::new(lbl).color(Color32::WHITE)).fill(clr).corner_radius(6)).clicked() { self.toggle(); }
-                        if on { let pn = port_name_only(&self.sel_port); ui.colored_label(color::GREEN, "● 已连接"); ui.colored_label(color::TEXT, format!("{} @ {} {} {} {}", pn, self.baud, self.db, self.sb, self.par)); }
-                        else { ui.colored_label(color::DIM, "○ 未连接"); }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| { if ui.small_button("刷新").clicked() { self.refresh(); } });
+                        if on { let pn = port_name_only(&self.sel_port); ui.colored_label(color::GREEN, "● 已连接"); ui.colored_label(self.tx(), format!("{} @ {} {} {} {}", pn, self.baud, self.db, self.sb, self.par)); }
+                        else { ui.colored_label(self.dim(), "○ 未连接"); }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let theme_icon = if self.dark { "☀" } else { "🌙" };
+                            if ui.small_button(theme_icon).clicked() { self.dark = !self.dark; }
+                            if ui.small_button("刷新").clicked() { self.refresh(); }
+                        });
                     });
                     let force_open = if self.was_on != on { Some(!on) } else { None };
                     egui::CollapsingHeader::new("串口设置").id_salt("cfg").default_open(!on).open(force_open).show(ui, |ui| {
@@ -413,10 +440,10 @@ impl eframe::App for HicomApp {
 
                 // ── 第二块：接收区（填满剩余空间，但为发送区留出固定高度） ──
                 let rx_avail_h = ui.available_height().max(100.0) - 185.0;
-                Frame { fill: color::PANEL, corner_radius: CornerRadius::same(6), inner_margin: Margin::symmetric(8, 6), ..Default::default() }
+                Frame { fill: self.panel(), corner_radius: CornerRadius::same(6), inner_margin: Margin::symmetric(8, 6), ..Default::default() }
                     .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.colored_label(color::TEXT, egui::RichText::new("接收数据").size(13.0));
+                        ui.colored_label(self.tx(), egui::RichText::new("接收数据").size(13.0));
                         if self.paused { ui.colored_label(color::YELLOW, "[已暂停]"); }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.selectable_label(self.view == View::Ascii, "ASCII").clicked() { self.view = View::Ascii; }
@@ -438,7 +465,8 @@ impl eframe::App for HicomApp {
                         egui::vec2(ui.available_width(), rx_avail_h),
                     );
                     // 提前画接收区的黑色背景（固定在 ScrollArea 后面的层）
-                    ui.painter().rect_filled(rx_bg_rect, CornerRadius::ZERO, Color32::BLACK);
+                    let rx_bg = if self.dark { color::RX_BG_DARK } else { color::RX_BG_LIGHT };
+                    ui.painter().rect_filled(rx_bg_rect, CornerRadius::ZERO, rx_bg);
                     egui::ScrollArea::vertical()
                         .id_salt(rx_id)
                         .auto_shrink([false; 2])
@@ -447,7 +475,7 @@ impl eframe::App for HicomApp {
                         .show(ui, |ui| {
                             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                             let c = match self.view { View::Ascii => &self.txt, View::Hex => &self.hex };
-                            Frame { fill: Color32::BLACK, inner_margin: Margin::symmetric(4, 4), ..Default::default() }
+                            Frame { fill: rx_bg, inner_margin: Margin::symmetric(4, 4), ..Default::default() }
                                 .show(ui, |ui| {
                                     ui.set_min_size(egui::vec2(ui.available_width().max(0.0), rx_avail_h.max(0.0)));
                                     // 逐行显示，奇偶行交替文字颜色
@@ -468,10 +496,10 @@ impl eframe::App for HicomApp {
                 ui.add_space(4.0);
 
                 // ── 第三块：发送区 + 状态（固定高度） ──
-                Frame { fill: color::PANEL, corner_radius: CornerRadius::same(6), inner_margin: Margin::symmetric(8, 6), ..Default::default() }
+                Frame { fill: self.panel(), corner_radius: CornerRadius::same(6), inner_margin: Margin::symmetric(8, 6), ..Default::default() }
                     .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.colored_label(color::TEXT, egui::RichText::new("发送").size(13.0));
+                        ui.colored_label(self.tx(), egui::RichText::new("发送").size(13.0));
                         if ui.selectable_label(!self.hexmd, "TXT").clicked() { self.hexmd = false; }
                         if ui.selectable_label(self.hexmd, "HEX").clicked() { self.hexmd = true; }
                         ui.separator();
@@ -487,14 +515,14 @@ impl eframe::App for HicomApp {
                     });
                     ui.separator();
                     ui.horizontal(|ui| {
-                        ui.colored_label(color::TEXT, &self.msg);
+                        ui.colored_label(self.tx(), &self.msg);
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.colored_label(color::GREEN, format!("RX: {}", fmtsz(self.rx_n)));
                             ui.add_space(8.0);
                             ui.colored_label(color::ACCENT, format!("TX: {}", fmtsz(self.tx_n)));
                             ui.add_space(12.0);
-                            if on { let pn = port_name_only(&self.sel_port); ui.colored_label(color::DIM, format!("{} @ {} {} {} {}", pn, self.baud, self.db, self.sb, self.par)); ui.add_space(4.0); ui.colored_label(color::GREEN, "●"); }
-                            else { ui.colored_label(color::DIM, "○ 未连接"); }
+                            if on { let pn = port_name_only(&self.sel_port); ui.colored_label(self.dim(), format!("{} @ {} {} {} {}", pn, self.baud, self.db, self.sb, self.par)); ui.add_space(4.0); ui.colored_label(color::GREEN, "●"); }
+                            else { ui.colored_label(self.dim(), "○ 未连接"); }
                         });
                     });
                 });
