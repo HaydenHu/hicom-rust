@@ -357,20 +357,25 @@ impl eframe::App for HicomApp {
                     ui.separator();
                     // 接收区填满剩余垂直空间但不超过 rx_avail_h
                     let rx_id = ui.next_auto_id();
+                    let rx_bg_rect = egui::Rect::from_min_size(
+                        ui.next_widget_position(),
+                        egui::vec2(ui.available_width(), rx_avail_h),
+                    );
+                    // 提前画接收区的黑色背景（固定在 ScrollArea 后面的层）
+                    ui.painter().rect_filled(rx_bg_rect, CornerRadius::ZERO, Color32::BLACK);
                     egui::ScrollArea::vertical()
                         .id_salt(rx_id)
                         .auto_shrink([false; 2])
                         .stick_to_bottom(true)
                         .max_height(rx_avail_h)
                         .show(ui, |ui| {
-                            let r = ui.max_rect();
-                            ui.painter().rect_filled(r, CornerRadius::ZERO, Color32::BLACK);
-                            ui.set_min_size(r.size());
                             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                             let c = match self.view { View::Ascii => &self.txt, View::Hex => &self.hex };
                             Frame { fill: Color32::BLACK, inner_margin: Margin::symmetric(4, 4), ..Default::default() }
                                 .show(ui, |ui| {
-                            ui.colored_label(color::TEXT, egui::RichText::new(c).font(egui::FontId::monospace(14.0)));
+                                    // 内容不够时确保有足够的空白区域也是黑色
+                                    ui.set_min_size(egui::vec2(ui.available_width().max(0.0), rx_avail_h.max(0.0)));
+                                    ui.colored_label(color::TEXT, egui::RichText::new(c).font(egui::FontId::monospace(14.0)));
                                 });
                         });
                 });
