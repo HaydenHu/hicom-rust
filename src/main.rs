@@ -318,9 +318,22 @@ impl eframe::App for HicomApp {
 
         if !self.font_ok {
             let mut fs = egui::FontDefinitions::default();
-            if let Ok(d) = std::fs::read("C:/Windows/Fonts/NotoSansSC-VF.ttf") {
-                fs.font_data.insert("noto".into(), FontData::from_owned(d).into());
-                for f in [FontFamily::Proportional, FontFamily::Monospace] { if let Some(v) = fs.families.get_mut(&f) { v.insert(0, "noto".into()); } }
+            // 跨平台字体回退：检查多个可能的字体路径
+            let font_paths = [
+                "C:/Windows/Fonts/NotoSansSC-VF.ttf",
+                "C:/Windows/Fonts/msyh.ttc",
+                "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+                "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                "/System/Library/Fonts/PingFang.ttc",
+            ];
+            for path in &font_paths {
+                if let Ok(d) = std::fs::read(path) {
+                    fs.font_data.insert("noto".into(), FontData::from_owned(d).into());
+                    for f in [FontFamily::Proportional, FontFamily::Monospace] {
+                        if let Some(v) = fs.families.get_mut(&f) { v.insert(0, "noto".into()); }
+                    }
+                    break;
+                }
             }
             ctx.set_fonts(fs); self.font_ok = true;
         }
