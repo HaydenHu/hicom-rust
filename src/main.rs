@@ -58,7 +58,7 @@ impl std::fmt::Display for FlowCtrl { fn fmt(&self, f: &mut std::fmt::Formatter)
 impl std::fmt::Display for Newline { fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result { write!(f, "{}", match self { Newline::None => "无", Newline::CrLf => "\\r\\n", Newline::Cr => "\\r", Newline::Lf => "\\n" }) } }
 
 #[derive(Clone, Copy, PartialEq, Eq)] enum View { Ascii, Hex }
-#[derive(Clone, Copy, PartialEq, Eq)] enum Page { Terminal, Waveform }
+#[derive(Clone, Copy, PartialEq, Eq)] enum Page { Terminal, Waveform, About }
 
 // ── 共享接收缓冲区 ──
 // 后台线程只写入原始字节，UI 线程取走后再格式化
@@ -583,6 +583,7 @@ impl eframe::App for HicomApp {
                 ui.horizontal(|ui| {
                     if ui.selectable_label(self.page == Page::Terminal, "终端").clicked() { self.page = Page::Terminal; }
                     if ui.selectable_label(self.page == Page::Waveform, "波形").clicked() { self.page = Page::Waveform; }
+                    if ui.selectable_label(self.page == Page::About, "关于").clicked() { self.page = Page::About; }
                 });
 
                 ui.add_space(4.0);
@@ -632,6 +633,46 @@ impl eframe::App for HicomApp {
                         }
                     });
                     ctx.request_repaint_after(Duration::from_millis(50));
+                } else if self.page == Page::About {
+                // ═══ 关于页 ═══
+                Frame { fill: self.panel(), corner_radius: CornerRadius::same(6), inner_margin: Margin::symmetric(16, 16), ..Default::default() }
+                    .show(ui, |ui| {
+                    ui.vertical(|ui| {
+                        ui.add_space(20.0);
+                        ui.heading(egui::RichText::new("HiCOM").size(28.0).color(color::ACCENT));
+                        ui.add_space(8.0);
+                        ui.label(egui::RichText::new("串口调试助手").size(16.0));
+                        ui.add_space(20.0);
+                        ui.separator();
+                        ui.add_space(12.0);
+                        ui.label(egui::RichText::new("作者: Hayden").size(14.0).color(self.tx()));
+                        ui.add_space(8.0);
+                        ui.label(egui::RichText::new("版本: 1.0.0").size(14.0).color(self.tx()));
+                        ui.add_space(8.0);
+                        ui.hyperlink_to("GitHub: github.com/HaydenHu", "https://github.com/HaydenHu");
+                        ui.add_space(8.0);
+                        ui.label(egui::RichText::new("邮箱: hayhi@qq.com").size(14.0).color(self.tx()));
+                        ui.add_space(20.0);
+                        ui.separator();
+                        ui.add_space(12.0);
+                        ui.colored_label(self.dim(), "功能特性:");
+                        ui.add_space(4.0);
+                        for feat in &[
+                            "• 串口收发 (ASCII/HEX)",
+                            "• 多种串口参数配置 (波特率/数据位/停止位/校验/流控)",
+                            "• 定时发送 /HEX发送/换行设置",
+                            "• 接收数据波形显示",
+                            "• 接收区搜索定位",
+                            "• 主题切换 (亮色/暗色)",
+                            "• 日志保存 (支持选择目录)",
+                            "• 跨平台支持 (Windows/Linux/macOS)",
+                        ] {
+                            ui.colored_label(self.tx(), egui::RichText::new(*feat).size(13.0));
+                        }
+                        ui.add_space(30.0);
+                        ui.colored_label(self.dim(), egui::RichText::new("基于 Rust + egui 构建").size(11.0));
+                    });
+                });
                 } else {
                 // ── 终端页：接收区 ──
                 let rx_avail_h = ui.available_height().max(100.0) - 185.0;
@@ -778,6 +819,8 @@ impl eframe::App for HicomApp {
                         ui.separator();
                         ui.label("换行"); combo(ui, "N", &mut self.nl, &[Newline::None, Newline::CrLf, Newline::Cr, Newline::Lf], 55.0);
                         ui.separator();
+                        if ui.small_button("清空").clicked() { self.send.clear(); }
+                        ui.separator();
                         if ui.checkbox(&mut self.auto, "定时").changed() && !self.auto { self.auto_acc = 0.0; }
                         if self.auto { ui.add(egui::TextEdit::singleline(&mut self.auto_t).desired_width(50.0)); ui.label("ms"); }
                     });
@@ -788,7 +831,7 @@ impl eframe::App for HicomApp {
                         egui::ScrollArea::vertical().id_salt("send").max_height(send_h).show(ui, |ui| {
                             ui.add_sized([text_w, send_h], TextEdit::multiline(&mut self.send).font(egui::FontId::monospace(14.0)).hint_text(h));
                         });
-                        ui.add_sized([80.0, send_h], egui::Button::new(egui::RichText::new("发送").size(15.0).color(Color32::WHITE)).fill(color::ACCENT).corner_radius(6)).clicked().then(|| self.do_send());
+                        if ui.add_sized([70.0, send_h], egui::Button::new(egui::RichText::new("发送").size(15.0).color(Color32::WHITE)).fill(color::ACCENT).corner_radius(6)).clicked() { self.do_send(); }
                     });
                     ui.separator();
                     ui.horizontal(|ui| {
