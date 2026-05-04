@@ -87,6 +87,7 @@ struct HicomApp {
     msg: String, msg_timer: f32,
     was_on: bool,
     search: String, search_idx: usize, search_show: bool, search_scroll: bool,
+    rx_only: bool,
     // 波形相关
     wave_buf: VecDeque<f32>,
     wave_sample_rate: usize,
@@ -120,7 +121,7 @@ impl HicomApp {
             send: String::new(), hexmd: false, nl: Newline::CrLf,
             auto: false, auto_t: "200".into(), auto_acc: 0.0,
             msg: "就绪".into(), msg_timer: 0.0,
-            was_on: false, search: String::new(), search_idx: 0, search_show: false, search_scroll: false,
+            was_on: false, search: String::new(), search_idx: 0, search_show: false, search_scroll: false, rx_only: false,
             wave_buf: VecDeque::with_capacity(2000),
             wave_sample_rate: 10,
             wave_channel: 0,
@@ -544,7 +545,7 @@ impl eframe::App for HicomApp {
 
         // ═══ 一个 CentralPanel，内部用 vertical 分三块 ═══
         egui::CentralPanel::default()
-            .frame(Frame::NONE.inner_margin(Margin::symmetric(8, 8)))
+            .frame(Frame::NONE.inner_margin(Margin { left: 8, right: 8, top: 8, bottom: 24 }))
             .show(ctx, |ui| {
             ui.vertical(|ui| {
                 // ── 第一块：串口配置 ──
@@ -563,13 +564,12 @@ impl eframe::App for HicomApp {
                     });
                     let force_open = if self.was_on != on { Some(!on) } else { None };
                     egui::CollapsingHeader::new("串口设置").id_salt("cfg").default_open(!on).open(force_open).show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.add_enabled_ui(!on, |ui| { ui.label("端口"); combo(ui, "p", &mut self.sel_port, &self.names.clone(), 160.0); });
+                        ui.horizontal_wrapped(|ui| {
+                            ui.add_enabled_ui(!on, |ui| { ui.label("端口"); combo(ui, "p", &mut self.sel_port, &self.names.clone(), 120.0); });
                             ui.separator();
                             ui.add_enabled_ui(!on, |ui| {
                                 ui.label("波特率");
-                                ui.add(egui::TextEdit::singleline(&mut self.baud).desired_width(80.0).font(egui::FontId::monospace(13.0)).hint_text("115200"));
-                                // 常用值快速选择
+                                ui.add(egui::TextEdit::singleline(&mut self.baud).desired_width(70.0).font(egui::FontId::monospace(13.0)).hint_text("115200"));
                                 egui::ComboBox::from_id_salt("baud_preset").selected_text("").width(10.0).show_ui(ui, |ui| {
                                     for s in &["300","1200","2400","4800","9600","19200","38400","57600","115200","230400","460800","921600"] {
                                         if ui.selectable_label(false, *s).clicked() { self.baud = s.to_string(); }
@@ -577,7 +577,7 @@ impl eframe::App for HicomApp {
                                 });
                             });
                             ui.separator();
-                            ui.add_enabled_ui(!on, |ui| { ui.label("数据"); combo(ui, "D", &mut self.db, &[DataBits::Eight, DataBits::Seven, DataBits::Six, DataBits::Five], 40.0); ui.label("停止"); combo(ui, "S", &mut self.sb, &[StopBits::One, StopBits::Two], 35.0); ui.label("校验"); combo(ui, "P", &mut self.par, &[Parity::None, Parity::Odd, Parity::Even], 60.0); ui.label("流控"); combo(ui, "F", &mut self.fc, &[FlowCtrl::None, FlowCtrl::Hardware, FlowCtrl::Software], 70.0); });
+                            ui.add_enabled_ui(!on, |ui| { ui.label("数据"); combo(ui, "D", &mut self.db, &[DataBits::Eight, DataBits::Seven, DataBits::Six, DataBits::Five], 35.0); ui.label("停止"); combo(ui, "S", &mut self.sb, &[StopBits::One, StopBits::Two], 30.0); ui.label("校验"); combo(ui, "P", &mut self.par, &[Parity::None, Parity::Odd, Parity::Even], 50.0); ui.label("流控"); combo(ui, "F", &mut self.fc, &[FlowCtrl::None, FlowCtrl::Hardware, FlowCtrl::Software], 60.0); });
                             ui.separator();
                             ui.add_enabled_ui(on, |ui| { ui.spacing_mut().item_spacing = Vec2::new(4.0, 0.0); let mut d = self.dtr; if ui.checkbox(&mut d, "DTR").changed() { self.dtr_set(d); } let mut r = self.rts; if ui.checkbox(&mut r, "RTS").changed() { self.rts_set(r); } });
                         });
@@ -684,7 +684,7 @@ impl eframe::App for HicomApp {
                 });
                 } else {
                 // ── 终端页：接收区 ──
-                let rx_avail_h = ui.available_height().max(100.0) - 185.0;
+                let rx_avail_h = if self.rx_only { ui.available_height().max(100.0) - 55.0 } else { ui.available_height().max(100.0) - 185.0 };
                 Frame { fill: self.panel(), corner_radius: CornerRadius::same(6), inner_margin: Margin::symmetric(8, 6), ..Default::default() }
                     .show(ui, |ui| {
                     ui.horizontal(|ui| {
@@ -715,6 +715,7 @@ impl eframe::App for HicomApp {
                             }
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.selectable_label(self.rx_only, "仅接收").clicked() { self.rx_only = !self.rx_only; }
                             ui.checkbox(&mut self.paused, "暂停");
                             ui.checkbox(&mut self.ts, "时间戳");
                             if ui.small_button("清空").clicked() { self.clr(); }
@@ -818,7 +819,8 @@ impl eframe::App for HicomApp {
 
                 ui.add_space(4.0);
 
-                // ── 第三块：发送区 + 状态（固定高度） ──
+                if !self.rx_only {
+                // ── 第三块：发送区（固定高度） ──
                 Frame { fill: self.panel(), corner_radius: CornerRadius::same(6), inner_margin: Margin::symmetric(8, 6), ..Default::default() }
                     .show(ui, |ui| {
                     ui.horizontal(|ui| {
@@ -842,7 +844,12 @@ impl eframe::App for HicomApp {
                         });
                         if ui.add_sized([70.0, send_h], egui::Button::new(egui::RichText::new("发送").size(15.0).color(Color32::WHITE)).fill(color::ACCENT).corner_radius(6)).clicked() { self.do_send(); }
                     });
-                    ui.separator();
+                });
+                } // if !rx_only
+                // 状态栏（始终显示）
+                ui.add_space(4.0);
+                Frame { fill: self.panel(), corner_radius: CornerRadius::same(6), inner_margin: Margin::symmetric(8, 6), ..Default::default() }
+                    .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.colored_label(self.tx(), &self.msg);
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
