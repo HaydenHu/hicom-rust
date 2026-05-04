@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::collections::VecDeque;
 use std::fmt::Write;
 use std::io::Read;
 use std::sync::mpsc;
@@ -57,6 +58,7 @@ impl std::fmt::Display for FlowCtrl { fn fmt(&self, f: &mut std::fmt::Formatter)
 impl std::fmt::Display for Newline { fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result { write!(f, "{}", match self { Newline::None => "无", Newline::CrLf => "\\r\\n", Newline::Cr => "\\r", Newline::Lf => "\\n" }) } }
 
 #[derive(Clone, Copy, PartialEq, Eq)] enum View { Ascii, Hex }
+#[derive(Clone, Copy, PartialEq, Eq)] enum Page { Terminal, Waveform }
 
 // ── 共享接收缓冲区 ──
 // 后台线程只写入原始字节，UI 线程取走后再格式化
@@ -75,6 +77,7 @@ struct HicomApp {
     sel_port: String, baud: String,
     db: DataBits, sb: StopBits, par: Parity, fc: FlowCtrl,
     dtr: bool, rts: bool,
+    page: Page,
     view: View,
     txt: String, hex: String,
     rx_n: u64, tx_n: u64,
@@ -84,6 +87,17 @@ struct HicomApp {
     msg: String, msg_timer: f32,
     was_on: bool,
     search: String, search_idx: usize, search_show: bool, search_scroll: bool,
+    // 波形相关
+    wave_buf: VecDeque<f32>,
+    wave_sample_rate: usize,
+    wave_channel: u8,
+    wave_min: f32, wave_max: f32,
+    wave_auto_scale: bool,
+    wave_paused: bool,
+    wave_test: bool,
+    wave_test_t: f32,
+    wave_zoom: f32,
+    wave_offset_x: f32,
 }
 
 impl HicomApp {
@@ -101,12 +115,22 @@ impl HicomApp {
             font_ok: false, dark: true, port_open: Arc::new(Mutex::new(false)), port_tx: None,
             rx: Arc::new(Mutex::new(RxBuf { raw: Vec::with_capacity(65536), bytes: 0 })),
             names, sel_port: sel, baud: "115200".into(), db: DataBits::Eight, sb: StopBits::One, par: Parity::None, fc: FlowCtrl::None,
-            dtr: true, rts: true, view: View::Ascii, txt: String::new(), hex: String::new(), rx_n: 0, tx_n: 0,
+            dtr: true, rts: true, page: Page::Terminal, view: View::Ascii, txt: String::new(), hex: String::new(), rx_n: 0, tx_n: 0,
             ts: true, paused: false,
             send: String::new(), hexmd: false, nl: Newline::CrLf,
             auto: true, auto_t: "200".into(), auto_acc: 0.0,
             msg: "就绪".into(), msg_timer: 0.0,
             was_on: false, search: String::new(), search_idx: 0, search_show: false, search_scroll: false,
+            wave_buf: VecDeque::with_capacity(2000),
+            wave_sample_rate: 10,
+            wave_channel: 0,
+            wave_min: 0.0, wave_max: 255.0,
+            wave_auto_scale: true,
+            wave_paused: false,
+            wave_test: false,
+            wave_test_t: 0.0,
+            wave_zoom: 1.0,
+            wave_offset_x: 0.0,
         }
     }
 
@@ -141,6 +165,20 @@ impl HicomApp {
             write!(&mut self.hex, "{:02X} ", b).unwrap();
         }
         if self.hex.len() > cap { let k = self.hex.len() - cap / 2; self.hex.drain(..k); }
+
+        // ── 波形数据提取 ──
+        if !self.wave_paused {
+            let rate = self.wave_sample_rate.max(1);
+            for (i, &b) in data.iter().enumerate() {
+                if i % rate == 0 {
+                    let val = b as f32;
+                    self.wave_buf.push_back(val);
+                    if self.wave_buf.len() > 2000 {
+                        self.wave_buf.pop_front();
+                    }
+                }
+            }
+        }
     }
 
     fn refresh(&mut self) { self.names = available_ports(); }
@@ -351,6 +389,108 @@ fn combo<T: Clone + PartialEq + std::fmt::Display>(ui: &mut egui::Ui, id: &str, 
     egui::ComboBox::from_id_salt(id).width(w).selected_text(v.to_string()).show_ui(ui, |ui| { for o in opts { ui.selectable_value(v, o.clone(), o.to_string()); } });
 }
 
+fn draw_waveform(ui: &mut egui::Ui, buf: &VecDeque<f32>, min_y: f32, max_y: f32, _wave_changed: bool, dark: bool, zoom: &mut f32, offset_x: &mut f32) {
+    let (resp, painter) = ui.allocate_painter(ui.available_size(), egui::Sense::click_and_drag());
+    let rect = resp.rect;
+    if rect.width() < 10.0 || rect.height() < 10.0 { return; }
+
+    // 鼠标滚轮缩放
+    if resp.hovered() {
+        let scroll = ui.input(|i| i.raw_scroll_delta.y);
+        if scroll != 0.0 {
+            *zoom = (*zoom + scroll * 0.01).clamp(0.1, 10.0);
+        }
+    }
+    // 拖拽平移
+    if resp.dragged_by(egui::PointerButton::Primary) {
+        let delta = ui.input(|i| i.pointer.delta());
+        *offset_x += delta.x;
+        if *offset_x > 0.0 { *offset_x = 0.0; }
+    }
+
+    let bg = if dark { Color32::from_rgb(20, 20, 24) } else { Color32::from_rgb(235, 235, 235) };
+    let grid = if dark { Color32::from_rgb(50, 50, 55) } else { Color32::from_rgb(210, 210, 210) };
+    let wave_color = if dark { Color32::from_rgb(70, 180, 255) } else { Color32::from_rgb(0, 100, 200) };
+    let text_color = if dark { Color32::from_rgb(180, 180, 190) } else { Color32::from_rgb(80, 80, 80) };
+
+    painter.rect_filled(rect, CornerRadius::ZERO, bg);
+
+    let plot_rect = rect.shrink2(egui::vec2(44.0, 22.0));
+    if plot_rect.width() <= 0.0 || plot_rect.height() <= 0.0 { return; }
+
+    let y_range = (max_y - min_y).max(1.0);
+
+    // 水平网格线 + Y 轴标签
+    for i in 0..=4 {
+        let y = plot_rect.bottom() - plot_rect.height() * (i as f32 / 4.0);
+        painter.line_segment([
+            egui::pos2(plot_rect.left(), y),
+            egui::pos2(plot_rect.right(), y),
+        ], (0.5, grid));
+        let val = min_y + y_range * (i as f32 / 4.0);
+        painter.text(
+            egui::pos2(plot_rect.left() - 8.0, y),
+            egui::Align2::RIGHT_CENTER,
+            format!("{:.1}", val),
+            egui::FontId::proportional(10.0),
+            text_color,
+        );
+    }
+
+    // 垂直网格线
+    let step_x_px = 60.0 * zoom.max(1.0);
+    let off = *offset_x;
+    let zm = *zoom;
+    let mut xg = plot_rect.left() + step_x_px - (off * zm).rem_euclid(step_x_px);
+    while xg <= plot_rect.right() {
+        painter.line_segment([
+            egui::pos2(xg, plot_rect.top()),
+            egui::pos2(xg, plot_rect.bottom()),
+        ], (0.3, grid));
+        xg += step_x_px;
+    }
+
+    if buf.is_empty() { return; }
+
+    let n = buf.len();
+    let plot_w = plot_rect.width();
+    let display_count = ((n as f32) / zm).round() as usize;
+
+    let start = if display_count >= n { 0 } else { n - display_count };
+    let iter_len = n - start;
+
+    let offset_points = (-off / plot_w * iter_len as f32) as isize;
+    let iter_start = if offset_points <= 0 { start } else { (start as isize - offset_points).max(0) as usize };
+    let iter_end = n;
+
+    if iter_end <= iter_start + 1 { return; }
+
+    let sub_len = iter_end - iter_start;
+    let points_per_px = sub_len as f32 / plot_w;
+    let step = if points_per_px > 1.0 { (points_per_px.ceil() as usize).max(1) } else { 1 };
+
+    let mut prev: Option<egui::Pos2> = None;
+    for i in (iter_start..iter_end).step_by(step) {
+        let val = buf[i];
+        let t = (i - iter_start) as f32 / sub_len as f32;
+        let x = plot_rect.left() + t * plot_w;
+        let y = plot_rect.bottom() - ((val - min_y) / y_range) * plot_rect.height();
+        let p = egui::pos2(x.clamp(plot_rect.left(), plot_rect.right()), y.clamp(plot_rect.top(), plot_rect.bottom()));
+        if let Some(prev_p) = prev {
+            painter.line_segment([prev_p, p], (1.5, wave_color));
+        }
+        prev = Some(p);
+    }
+
+    painter.text(
+        egui::pos2(plot_rect.left(), rect.bottom() - 2.0),
+        egui::Align2::LEFT_BOTTOM,
+        &format!("{} 点  缩放 {:.1}x", n, zm),
+        egui::FontId::proportional(10.0),
+        text_color,
+    );
+}
+
 impl eframe::App for HicomApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if !self.font_ok {
@@ -439,7 +579,61 @@ impl eframe::App for HicomApp {
 
                 ui.add_space(4.0);
 
-                // ── 第二块：接收区（填满剩余空间，但为发送区留出固定高度） ──
+                // ── 页面切换 Tab ──
+                ui.horizontal(|ui| {
+                    if ui.selectable_label(self.page == Page::Terminal, "终端").clicked() { self.page = Page::Terminal; }
+                    if ui.selectable_label(self.page == Page::Waveform, "波形").clicked() { self.page = Page::Waveform; }
+                });
+
+                ui.add_space(4.0);
+
+                if self.page == Page::Waveform {
+                    // ═══ 波形页 ═══
+                    Frame { fill: self.panel(), corner_radius: CornerRadius::same(6), inner_margin: Margin::symmetric(8, 6), ..Default::default() }
+                        .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.colored_label(self.tx(), egui::RichText::new("波形").size(13.0));
+                            if ui.small_button("测试信号").clicked() { self.wave_test = !self.wave_test; if self.wave_test { self.wave_test_t = 0.0; self.wave_buf.clear(); } }
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.small_button("清空").clicked() { self.wave_buf.clear(); }
+                                ui.checkbox(&mut self.wave_paused, "暂停");
+                                ui.checkbox(&mut self.wave_auto_scale, "自动");
+                                ui.label("范围:"); ui.add(egui::DragValue::new(&mut self.wave_min).speed(1.0).range(0.0..=255.0));
+                                ui.label("~"); ui.add(egui::DragValue::new(&mut self.wave_max).speed(1.0).range(0.0..=255.0));
+                                ui.label("通道:"); combo(ui, "ch", &mut self.wave_channel, &[0,1,2,3,4,5,6,7], 30.0);
+                                ui.label("采样:");
+                                combo(ui, "sr", &mut self.wave_sample_rate, &[1,2,5,10,20,50,100,200,500], 40.0);
+                            });
+                        });
+                        ui.separator();
+                        if self.wave_auto_scale && !self.wave_buf.is_empty() {
+                            let mut mn = 255.0f32;
+                            let mut mx = 0.0f32;
+                            for &v in &self.wave_buf {
+                                if v < mn { mn = v; }
+                                if v > mx { mx = v; }
+                            }
+                            let pad = (mx - mn).max(10.0) * 0.1;
+                            self.wave_min = (mn - pad).max(0.0);
+                            self.wave_max = (mx + pad).min(255.0);
+                        }
+                        draw_waveform(ui, &self.wave_buf, self.wave_min, self.wave_max, true, self.dark, &mut self.wave_zoom, &mut self.wave_offset_x);
+                        // 测试信号：每帧生成正弦波数据
+                        if self.wave_test && !self.wave_paused {
+                            let samples_per_frame = 20;
+                            for _ in 0..samples_per_frame {
+                                self.wave_test_t += 0.05;
+                                let val = 127.0 + 100.0 * (self.wave_test_t * std::f32::consts::PI * 2.0 / 20.0).sin();
+                                self.wave_buf.push_back(val);
+                                if self.wave_buf.len() > 2000 {
+                                    self.wave_buf.pop_front();
+                                }
+                            }
+                        }
+                    });
+                    ctx.request_repaint_after(Duration::from_millis(50));
+                } else {
+                // ── 终端页：接收区 ──
                 let rx_avail_h = ui.available_height().max(100.0) - 185.0;
                 Frame { fill: self.panel(), corner_radius: CornerRadius::same(6), inner_margin: Margin::symmetric(8, 6), ..Default::default() }
                     .show(ui, |ui| {
@@ -605,6 +799,7 @@ impl eframe::App for HicomApp {
                         });
                     });
                 });
+                } // end else (terminal page)
             });
         });
     }
