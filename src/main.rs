@@ -203,7 +203,7 @@ impl HicomApp {
         if let Some(tx) = &self.port_tx { let n = d.len(); let _ = tx.send(PortCmd::Write(d)); self.tx_n += n as u64; }
     }
 
-    fn clr(&mut self) { self.txt.clear(); self.hex.clear(); }
+    fn clr(&mut self) { self.txt.clear(); self.hex.clear(); self.rx_n = 0; }
     fn dtr_set(&mut self, v: bool) { self.dtr = v; if let Some(tx) = &self.port_tx { let _ = tx.send(PortCmd::SetDtr(v)); } }
     fn rts_set(&mut self, v: bool) { self.rts = v; if let Some(tx) = &self.port_tx { let _ = tx.send(PortCmd::SetRts(v)); } }
 
