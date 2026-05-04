@@ -373,9 +373,18 @@ impl eframe::App for HicomApp {
                             let c = match self.view { View::Ascii => &self.txt, View::Hex => &self.hex };
                             Frame { fill: Color32::BLACK, inner_margin: Margin::symmetric(4, 4), ..Default::default() }
                                 .show(ui, |ui| {
-                                    // 内容不够时确保有足够的空白区域也是黑色
                                     ui.set_min_size(egui::vec2(ui.available_width().max(0.0), rx_avail_h.max(0.0)));
-                                    ui.colored_label(color::TEXT, egui::RichText::new(c).font(egui::FontId::monospace(14.0)));
+                                    // 逐行显示，奇偶行交替文字颜色
+                                    let full_w = ui.available_width().max(1.0);
+                                    for (i, line) in c.split('\n').enumerate() {
+                                        let fg = match i % 3 {
+                                            0 => Color32::from_rgb(220, 220, 230),
+                                            1 => Color32::from_rgb(100, 200, 100),
+                                            _ => Color32::from_rgb(100, 180, 220),
+                                        };
+                                        let (id, painter) = ui.allocate_painter(egui::vec2(full_w, 18.0), egui::Sense::hover());
+                                        painter.text(id.rect.min + egui::vec2(2.0, 1.0), egui::Align2::LEFT_TOP, line, egui::FontId::monospace(14.0), fg);
+                                    }
                                 });
                         });
                 });
