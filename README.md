@@ -15,7 +15,8 @@
 
 ## 截图
 
-![HiCOM 主界面](screenshot.png)
+##HiCOM 主界面 <img width="962" height="732" alt="image" src="https://github.com/user-attachments/assets/8f37839f-5e9d-484b-9692-4a50f491d76d" />
+
 
 ## 下载
 
